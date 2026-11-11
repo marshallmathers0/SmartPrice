@@ -2,7 +2,9 @@
 
 **A FastAPI backend that forecasts next-day product demand from real retail data, explains every forecast feature by feature, and turns it into a guardrailed, explainable price.**
 
-> **Live demo:** `<add your Render demo URL here>` · **API docs:** `<add your Render API URL>/docs` · **Demo video:** `<add your video link here>`
+> **Live demo:** [smartprice-demo.onrender.com](https://smartprice-demo.onrender.com) · **API docs (Swagger):** [smartprice-api-n7bp.onrender.com/docs](https://smartprice-api-n7bp.onrender.com/docs) · **Health:** [/health](https://smartprice-api-n7bp.onrender.com/health)
+>
+> Hosted on free tiers (Render + Neon + Upstash): if nobody has visited in the last 15 minutes, the first load takes about a minute while the service wakes up.
 
 Built on the real **UCI Online Retail II** dataset (1,067,371 transactions of a UK gift wholesaler, Dec 2009 – Dec 2011). PostgreSQL stores the catalog and sales history, Redis caches products, MLflow tracks every training run, and a Streamlit page lets anyone click through a forecast and its explanation.
 
