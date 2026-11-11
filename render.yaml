@@ -1,0 +1,46 @@
+# Render Blueprint — two free web services.
+#
+#   smartprice-api    the FastAPI backend, built from ./Dockerfile
+#                     (on every boot: alembic upgrade head -> idempotent seed -> uvicorn on $PORT)
+#   smartprice-demo   the Streamlit demo; talks to the API over HTTPS
+#
+# Database and cache live outside Render, on free tiers:
+#   PostgreSQL  -> Neon (or Supabase)  : paste its connection string into DATABASE_URL
+#   Redis       -> Upstash             : paste its rediss://... URL into REDIS_URL
+#
+# Secrets use `sync: false`: Render asks for them in the dashboard when the
+# Blueprint is created, and they are never stored in this repository.
+services:
+  - type: web
+    name: smartprice-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL          # e.g. postgresql://user:pw@ep-xxx.eu-central-1.aws.neon.tech/neondb?sslmode=require
+        sync: false
+      - key: REDIS_URL             # e.g. rediss://default:<token>@<name>.upstash.io:6379
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: MODEL_VERSION
+        value: v1
+      - key: CURRENCY_SYMBOL
+        value: "£"
+
+  - type: web
+    name: smartprice-demo
+    runtime: python
+    plan: free
+    buildCommand: pip install -r demo/requirements.txt
+    startCommand: streamlit run demo/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: SMARTPRICE_API_URL    # the API's public URL, e.g. https://smartprice-api.onrender.com
+        sync: false
+      - key: CURRENCY_SYMBOL
+        value: "£"

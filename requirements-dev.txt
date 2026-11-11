@@ -1,0 +1,25 @@
+# DEVELOPMENT dependencies — data preparation, training, evaluation, tracking, tests.
+#
+#   pip install -r requirements-dev.txt
+#
+# Includes everything the API needs (requirements.txt) plus offline tools.
+# None of these are imported when the API starts (tests/test_architecture.py checks it).
+-r requirements.txt
+
+# =========================
+# Data preparation / training / evaluation
+# =========================
+openpyxl==3.1.5          # reads the raw .xlsx dataset (python -m app.ml.data.prepare)
+lightgbm==4.7.0          # gradient-boosted trees (forecast candidate)
+matplotlib==3.11.2       # report plots (reports/*.png)
+mlflow==3.18.0           # experiment tracking (python -m app.ml.train)
+shap==0.54.1             # SHAP summary plot for the tree model (reports only; the API does not use it)
+
+# =========================
+# Testing
+# =========================
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1            # FastAPI TestClient
+pytest-cov==7.1.0        # coverage report: pytest --cov=app
+pyyaml==6.0.3            # parse render.yaml in tests

@@ -1,0 +1,43 @@
+# RUNTIME dependencies — what the API needs to serve requests.
+# This is what the Docker image installs. Training, evaluation and test tools
+# live in requirements-dev.txt so they never bloat the production image.
+#
+# Exact versions: the same environment on every machine and on every deploy.
+# Upgrade deliberately (change a pin, run the tests), never by accident.
+
+# =========================
+# Web API
+# =========================
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+pydantic-settings==2.15.0
+
+# =========================
+# Database - PostgreSQL
+# =========================
+sqlalchemy[asyncio]==2.0.52
+asyncpg==0.32.0
+alembic==1.19.2
+
+# =========================
+# Redis
+# =========================
+redis[hiredis]==8.1.0
+
+# =========================
+# Machine Learning (inference only)
+# =========================
+# scikit-learn MUST match the version that trained models/<version>/model.joblib
+# (recorded in its metadata.json) — a pickled model is tied to the library version.
+numpy==2.5.2
+pandas==3.0.5
+scikit-learn==1.9.0
+scipy==1.18.1
+joblib==1.6.0
+holidays==0.108          # UK bank-holiday calendar feature (also needed to build features at inference)
+
+# =========================
+# Environment / Configuration
+# =========================
+python-dotenv==1.2.3

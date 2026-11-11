@@ -1,0 +1,17 @@
+# Keep the build context (and the image) small: only what the API needs to run.
+.venv/
+.git/
+.claude/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/raw/
+mlflow.db
+mlartifacts/
+reports/
+tests/
+demo/
+DEVLOG.md
+README.md
+docker-compose.yml

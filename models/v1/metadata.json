@@ -1,0 +1,90 @@
+{
+  "version": "v1",
+  "created_at": "2026-11-04T11:22:01+00:00",
+  "model_name": "Ridge regression",
+  "target": "units_sold",
+  "target_transform": "log1p",
+  "forecast_horizon": "next day",
+  "features": [
+    "product_id",
+    "lag_1",
+    "lag_7",
+    "lag_14",
+    "roll_mean_7",
+    "roll_std_7",
+    "roll_mean_28",
+    "roll_std_28",
+    "day_of_week",
+    "month",
+    "is_holiday",
+    "is_christmas_break",
+    "last_price",
+    "price_vs_28d"
+  ],
+  "min_history_days": 28,
+  "selection": {
+    "metric": "wape",
+    "development_from": "2009-12-29",
+    "development_to": "2011-09-09",
+    "test_from": "2011-09-10",
+    "test_to": "2011-12-09",
+    "development_rows": 12400,
+    "test_rows": 1820,
+    "cv_folds": 5,
+    "cv_validation_days": 60
+  },
+  "dataset": {
+    "path": "data/processed/daily_sales.csv",
+    "sha256": "56fdd5ebc6fe253d0acfb8af5fb90bbd18c8f92c63a5b68ba2ecf837b447cf8f",
+    "rows": 14780,
+    "products": 20,
+    "date_from": "2009-12-01",
+    "date_to": "2011-12-09"
+  },
+  "training_rows": 14220,
+  "metrics": {
+    "validation": {
+      "mae": 42.43077207440399,
+      "rmse": 132.74956866722988,
+      "wape": 0.7632099889040065
+    },
+    "test": {
+      "mae": 50.68263963561185,
+      "rmse": 151.4181407571663,
+      "wape": 0.7058215301849716
+    },
+    "test_wape_all_candidates": {
+      "Naive (yesterday)": 1.1774,
+      "Seasonal naive (same weekday last week)": 0.9901,
+      "Moving average (last 7 days)": 0.9282,
+      "Ridge regression": 0.7058,
+      "LightGBM": 0.7045
+    }
+  },
+  "anomaly_detector": {
+    "name": "Rolling z-score + repeated-value rule",
+    "threshold": 2.0191732972008762,
+    "test": {
+      "precision": 0.39473684210526316,
+      "recall": 0.6,
+      "f1": 0.47619047619047616
+    }
+  },
+  "hyperparameters": {
+    "alpha": 1.0,
+    "copy_X": true,
+    "fit_intercept": true,
+    "max_iter": null,
+    "positive": false,
+    "random_state": null,
+    "solver": "auto",
+    "tol": 0.0001
+  },
+  "library_versions": {
+    "python": "3.12.10",
+    "scikit-learn": "1.9.0",
+    "pandas": "3.0.5",
+    "numpy": "2.5.2"
+  },
+  "mlflow_run_id": "2d1511b15b2248ec9c36ef589b37e34f"
+}

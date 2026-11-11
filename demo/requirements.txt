@@ -1,0 +1,4 @@
+# The Streamlit demo only — a separate, small service. It talks to the API over HTTP
+# and never imports the app, so it needs none of the API's dependencies.
+streamlit==1.66.1
+requests==2.34.2

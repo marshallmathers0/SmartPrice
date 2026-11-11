@@ -1,0 +1,38 @@
+# Secrets — real credentials live only in .env (see .env.example)
+.env
+
+# Data — the raw 45 MB download is re-fetchable; data/processed/ IS committed
+# (small, hashed, and what training + the seed read)
+data/raw/
+
+# MLflow tracking — local run history (a SQLite file + artifact copies).
+# models/ IS committed: the versioned model the API (and the Docker image) serves.
+mlflow.db
+mlartifacts/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.idea/
+# personal editor settings stay out, but the shared "Start/Stop SmartPrice demo" tasks are committed
+.vscode/*
+!.vscode/tasks.json
+.DS_Store
+Thumbs.db
+
+# AI-assistant tooling installed locally (Neon / Streamlit agent skills) - not part of the app,
+# reinstallable with `npx neon skills -y`. .claude/launch.json (preview configs) IS committed.
+.claude/skills/
+.agents/
+skills-lock.json

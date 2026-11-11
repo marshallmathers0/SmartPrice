@@ -1,0 +1,21 @@
+{
+  // Run from the editor: Ctrl+Shift+P -> "Tasks: Run Task" -> pick one.
+  // (Antigravity is built on VS Code, so it reads this file the same way.)
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start SmartPrice demo",
+      "type": "shell",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-demo.ps1",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Stop SmartPrice demo",
+      "type": "shell",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-demo.ps1",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    }
+  ]
+}

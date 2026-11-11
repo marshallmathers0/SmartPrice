@@ -1,0 +1,67 @@
+# Local PostgreSQL + Redis for SmartPrice.
+#
+#   docker compose up -d      # start (data survives restarts in the named volume)
+#   docker compose down       # stop  (keeps data)
+#   docker compose down -v    # stop and DELETE all data
+#
+# Credentials come from .env (see .env.example) — never hard-coded here.
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: smartprice-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - smartprice_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Day 7: Redis as a pure cache — PostgreSQL stays the source of truth.
+  redis:
+    image: redis:7-alpine
+    container_name: smartprice-redis
+    restart: unless-stopped
+    # A cache never needs to survive a restart, so persistence is switched off.
+    # When memory is full, evict the least-recently-used key instead of failing writes.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Phase 6: the API itself, built from the Dockerfile — the same image a host like Render runs.
+  # Optional (profile "app"):  docker compose --profile app up -d --build
+  # Plain `docker compose up -d` still starts only PostgreSQL + Redis, for running the API locally.
+  api:
+    profiles: ["app"]
+    build: .
+    image: smartprice-api
+    container_name: smartprice-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # The provider-style URL on purpose: the app converts it to postgresql+asyncpg:// itself
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: docker
+      PORT: "8000"
+    ports:
+      - "${API_PORT:-8080}:8000"
+
+volumes:
+  smartprice_pgdata:

@@ -1,0 +1,13 @@
+{
+  "source": "UCI Online Retail II \u2014 https://archive.ics.uci.edu/dataset/502/online+retail+ii",
+  "raw_sha256": "572e36277c2390fbfde10664750731e0a86f55e33470d91919085f0408e67bfb",
+  "daily_sales_sha256": "56fdd5ebc6fe253d0acfb8af5fb90bbd18c8f92c63a5b68ba2ecf837b447cf8f",
+  "raw_rows": 1067371,
+  "clean_rows": 1002004,
+  "products": 20,
+  "date_from": "2009-12-01",
+  "date_to": "2011-12-09",
+  "daily_rows": 14780,
+  "zero_sale_rows": 3295,
+  "cost_ratio_assumption": 0.6
+}
