@@ -27,6 +27,7 @@
 - [Day 14 — Deployment Readiness & Live Demo (ML Phase 6)](#day-14--deployment-readiness--live-demo-ml-phase-6)
 - [Day 15 — Documentation & the Final Numbers (ML Phase 7)](#day-15--documentation--the-final-numbers-ml-phase-7)
 - [Day 16 — Running It Day to Day, Understanding It, and Hosting It](#day-16--running-it-day-to-day-understanding-it-and-hosting-it)
+- [Day 17 — Live in Production: How the Hosting Works, and Two Debugging Stories](#day-17--live-in-production-how-the-hosting-works-and-two-debugging-stories)
 - [Running the Application](#running-the-application)
 - [Key Engineering Principles Applied](#key-engineering-principles-applied)
 
@@ -5734,3 +5735,206 @@ It is built for front ends and short serverless functions. The API is a long-run
 
 **Q: Does your ML model predict the price?**
 No — it predicts tomorrow's demand. A bounded strategy turns demand into at most a ±10% adjustment of the competitor's price, and rule-based guardrails have the final say.
+
+---
+
+# Day 17 — Live in Production: How the Hosting Works, and Two Debugging Stories
+
+**Date:** 11 Nov 2026
+
+**What happened today:**
+- **Clean GitHub history.** The repository was recreated as one commit authored only by the owner: https://github.com/marshallmathers0/SmartPrice
+- **Deployed on free tiers:** Render + Neon + Upstash.
+  - Demo: https://smartprice-demo.onrender.com
+  - API docs: https://smartprice-api-n7bp.onrender.com/docs
+  - Health: https://smartprice-api-n7bp.onrender.com/health
+- **Verified live:**
+  - `/health` reports database `ok`, cache `ok` and model `v1`.
+  - Products, forecast and explain all return 200.
+  - POST `/pricing` returns 200 for all 15 product × strategy combinations tried.
+  - The demo loads, with its status line showing API, database, cache and model all ok.
+- **README:** its top now links the demo, Swagger and the health check.
+
+This closes two "still open" items from Day 16: the git repository and the cloud deploy.
+
+---
+
+## Part 1 — How Render, Neon and Upstash Work Together
+
+### The three services
+
+| Service | What it is | What it runs for SmartPrice |
+|---|---|---|
+| **Render** | A platform that builds code from GitHub and runs it as web services | `smartprice-api` (the Docker image) and `smartprice-demo` (Streamlit) |
+| **Neon** | Managed, serverless **PostgreSQL** | The `products` and `sales_history` tables |
+| **Upstash** | Managed, serverless **Redis** | The product cache (`product:<id>` keys, 5-minute TTL) |
+
+Render is where the **code** runs. Neon and Upstash are where the **data** lives. Nothing on Render stores data, because a free Render service has no persistent disk: every restart starts from a clean container. That is why the database and cache live outside Render.
+
+### The picture
+
+```
+   Browser (anyone)
+      │ HTTPS
+      ▼
+┌──────────────────────── Render ────────────────────────┐
+│  smartprice-demo (Streamlit, Python)                   │
+│     reads SMARTPRICE_API_URL ──┐                       │
+│                                │ HTTPS (server-side)   │
+│                                ▼                       │
+│  smartprice-api (Docker: FastAPI + Ridge model)        │
+│     reads DATABASE_URL ─────┐        reads REDIS_URL ──┼──┐
+└─────────────────────────────┼──────────────────────────┘  │
+                              │ TCP 5432 + TLS              │ TCP 6379 + TLS
+                              ▼                             ▼
+                   Neon (PostgreSQL)              Upstash (Redis)
+                   ep-xxx.neon.tech               xxx.upstash.io
+```
+
+### "Pasting a URL" connects them: what that actually means
+
+A connection string is a whole set of connection instructions packed into one line:
+
+```
+postgresql://neondb_owner:SECRET@ep-xxx.eu-central-1.aws.neon.tech/neondb?sslmode=require
+└── scheme ─┘└─── user ───┘└pass┘└────────────── host ──────────────┘└─db─┘└─ options ─┘
+
+rediss://default:SECRET@xxx.upstash.io:6379
+└scheme┘└─user─┘└pass┘└───── host ───┘└port┘      rediss = Redis over TLS (two s's)
+```
+
+- The **scheme** chooses the protocol and driver.
+- The **user and password** prove who we are.
+- The **host and port** say where the server is.
+- The **database name** picks the database.
+- The **options** set the security (`sslmode=require` means encrypted or nothing).
+
+When this text is pasted into Render's **Environment** tab, the following happens, step by step:
+
+1. **Render stores it as an environment variable** and injects it into the container's process when it starts. The value is never in the code or on GitHub: `render.yaml` marks it `sync: false`, so Render asks for it in the dashboard.
+
+2. **pydantic-settings reads it at startup.** `Settings` (in `app/config/settings.py`) maps the environment variable `DATABASE_URL` to the field `database_url`. The same code reads `.env` locally and the real environment on Render, with no `if production:` branches.
+
+3. **A validator translates the URL into what the async driver needs.** Neon gives `postgresql://...?sslmode=require&channel_binding=require`. SQLAlchemy's async engine needs `postgresql+asyncpg://...?ssl=require`. `normalise_database_url()` does three things:
+   - rewrites the scheme;
+   - renames `sslmode` to `ssl`;
+   - drops `channel_binding`, an option only libpq understands, which asyncpg would reject.
+
+   A local Docker URL passes through unchanged.
+
+4. **The container's entry point uses it before the server starts.** `scripts/start.sh` runs these in order:
+   - `alembic upgrade head`, which connects to Neon and creates or updates the tables;
+   - the idempotent seed, which loads the product catalog and 14,780 sales rows only if they are missing;
+   - `uvicorn`.
+
+   So a brand-new, empty Neon database becomes ready on the first boot.
+
+5. **SQLAlchemy opens a connection pool to Neon.** asyncpg looks up `ep-xxx...neon.tech` in DNS and opens a TCP connection on port 5432. It upgrades the connection to TLS, then logs in with the user and password.
+   - Neon's proxy reads the hostname from the TLS handshake (SNI) to know which project's compute to route to.
+   - If the compute was **scaled to zero** (idle for 5 minutes), Neon wakes it in a few hundred milliseconds.
+   - The pool keeps connections open and lends them to requests. `pool_pre_ping` replaces any connection Neon closed while it was idle.
+
+6. **The Redis client works the same way.** `Redis.from_url(REDIS_URL)` parses the URL, opens TCP to `xxx.upstash.io:6379`, upgrades to TLS (because of `rediss://`) and sends `AUTH default <password>`. Creating the client does not connect; the first command does. Short timeouts plus a circuit breaker mean a slow or broken Redis never blocks a request, and the API falls back to PostgreSQL.
+
+7. **The demo finds the API through the same mechanism.** `SMARTPRICE_API_URL` is just the API's public HTTPS address. The Streamlit Python code runs **on Render's server, not in the visitor's browser**, so it calls the API server-to-server with `requests`, and CORS is not involved. The browser only ever talks to the demo.
+
+8. **Render routes the public traffic.** Render's load balancer terminates HTTPS for `smartprice-api-n7bp.onrender.com` and forwards plain HTTP to the container on `$PORT`. That is why `start.sh` passes `--proxy-headers` to uvicorn: it trusts Render's `X-Forwarded-*` headers, so the app knows the original request was HTTPS.
+   - Render checks `GET /health` before switching traffic to a new deploy.
+   - A deploy that never becomes healthy never replaces the working one.
+
+9. **Every `git push` to `main` redeploys.** Render watches the GitHub repository (`autoDeploy: true`), rebuilds the image and repeats steps 1–8.
+
+### Why the direct Neon string, not the pooled one
+Neon offers two hosts: `ep-xxx` (direct) and `ep-xxx-pooler` (through PgBouncer). The pooler in transaction mode can hand each statement to a different server connection. asyncpg caches **prepared statements** per connection, so a statement prepared on one connection may be missing on the next, and requests fail. The app already pools its own connections in SQLAlchemy, so the direct host is both correct and enough.
+
+### Free-tier behaviour to expect
+- **Render:** a service sleeps after 15 minutes with no traffic, and the next request waits about a minute while it wakes. The 750 free hours a month are shared across the account.
+- **Neon:** compute scales to zero after 5 idle minutes and wakes in under a second. 1 GB of storage.
+- **Upstash:** 500K commands a month.
+
+The total cost is $0.
+
+---
+
+## Part 2 — Debugging Stories (Interview Format: Situation → Investigation → Fix → Lesson)
+
+### Backend story — "The deploy said healthy, but the product page returned 500"
+
+**Situation.** I deployed SmartPrice to Render with Neon for PostgreSQL and Upstash for Redis. The health check returned `"status": "ok"` and `"database": "ok"`, but `"cache": "unavailable"`. The Streamlit demo showed only **"Not Found"**, and `GET /api/v1/products/` returned **500 Internal server error**. That was the demo's first call, and the API's first impression.
+
+**Investigation: one symptom at a time, cheapest check first.**
+
+1. **The demo's "Not Found".** The demo's error message prints the exact URL it calls, and that was the clue. When the Blueprint was created, the API's URL didn't exist yet, so I had entered the *expected* name, `smartprice-api.onrender.com`. Render had added a suffix because the name was taken, so the real URL was `smartprice-api-n7bp.onrender.com`. I called the guessed host with `curl` and got **404**: someone else's service, or none. **Root cause 1:** a wrong environment variable, not a code bug.
+   - While fixing it, the new URL was pasted *after* the old one instead of replacing it, giving `https://smartprice-api.onrender.comhttps://...`.
+   - The error message showed this immediately. Printing the URL in the error paid off twice.
+
+2. **The API's 500 on products.** I narrowed it down by comparing endpoints:
+   - `/api/v1/models/current` returned **200**, so the app, the model and the routing were fine.
+   - `/api/v1/products/` returned **500**.
+
+   The difference between them is the dependency chain. The products route goes through `CachedProductRepository`, which builds the Redis client. The model route never touches Redis. Combined with `"cache": "unavailable"`, that pointed at Redis.
+
+3. **"But Redis failures are supposed to be harmless."** The cache was designed so that a Redis *outage* falls back to PostgreSQL, and tests prove that for every endpoint. So why a 500? Reading the code with that question in mind, I found that the outage handling catches **runtime** errors: `RedisError` and `OSError` from a server that is down or slow. A URL that **isn't a Redis URL at all** fails earlier, when the client is created, inside the dependency, which is outside that safety net.
+   - I reproduced it locally in one line: `Redis.from_url("https://xxx.upstash.io")` raises `ValueError: Redis URL must specify one of the following schemes (redis://, rediss://, unix://)`.
+   - Copying Upstash's REST URL (`https://...`) or its `redis-cli --tls -u ...` command instead of the `rediss://` string produces exactly that.
+   - `/health` hid it. Its Redis ping catches **every** exception and reports `"unavailable"`, so health looked like an ordinary outage while the request path crashed.
+
+**Fix.**
+- I set `REDIS_URL` to Upstash's TCP connection string (`rediss://default:<token>@xxx.upstash.io:6379`).
+- I set `SMARTPRICE_API_URL` to exactly `https://smartprice-api-n7bp.onrender.com`.
+- After the redeploy, `/health` showed `"cache": "ok"`, products returned 200, and all 15 product × strategy pricing calls returned 200. The demo rendered a full forecast with its explanation.
+- The 500 that appeared once more afterwards came from requests made while the redeploy was still rolling out. Repeating the calls after it finished gave 200 every time.
+
+**Lessons.**
+- **Narrow down by comparing endpoints.** One route working and one failing tells you which dependency to suspect, before reading any logs.
+- **Error messages should include the input that failed.** "Cannot reach the API at `<url>`" diagnosed two configuration mistakes in seconds.
+- **A health check must fail the same way the real path fails.** Here it was more forgiving than the request path, which turned a crash into what looked like an outage.
+- **Graceful degradation has to cover misconfiguration, not just outages.** The improvement this points to: validate `REDIS_URL` at startup and fall back to "no cache" with a loud warning, instead of a 500 on every product request.
+- **Most production incidents are configuration, not code.** Code had 522 tests. The two environment variables had none.
+
+### AI/ML story — "Every detector scored 0.00 on flatlines, and the fix exposed a floating-point bug"
+
+**Situation.** I was evaluating anomaly detectors on real sales data. Real data has no anomaly labels, so I **injected** labelled anomalies into the test window:
+- 30 spikes (4–8× normal);
+- 30 drops;
+- 15 "flatlines", where a broken data feed repeats the same number for days.
+
+After the first run, the two numbers that stood out were **flatline recall 0.00 for every detector**, and spike recall of only about 0.5.
+
+**Investigation: on validation data only.** I had already seen the test numbers once, so tuning on them would have been cheating. Every diagnosis from here used the **validation window**.
+
+1. **Spikes.** The median |z-score| of an injected spike was **1.71**, while the 95th percentile for *normal* days was **2.10**. A wholesaler's ordinary bulk orders make a 4–8× day look normal. The spike definition had been fixed before any results, so I **kept it**: making spikes bigger to get a better score would have been cheating. I reported it as a limitation instead.
+
+2. **Flatlines.** A stuck feed repeats a *normal-looking* number. Any "how far is today from normal?" score, whether z-score, IQR or Isolation Forest, cannot see it by design. So I looked for a signal that *does* separate them. "The last 4 open days are identical" was true for **7 of 15** flatline rows and **0 of 1,465** normal rows: a near-perfect signal that no detector was using.
+
+3. **The fix.** I added a fourth detector, **rolling z-score OR "last 4 open days identical"**, justified by validation evidence alone.
+
+**The second bug, caught by a unit test.** The first version of the "identical" rule checked `rolling std < 1e-9`. A unit test fed it a stuck value and **failed**: pandas computes rolling standard deviation with running sums, and identical values came out as **2.8 × 10⁻⁸**, not 0. The rule was silently missing flatlines. I replaced it with the **range (max − min) of integer unit counts**, which is exactly 0 when the values are identical. No tolerance to tune, and no floating-point residue.
+
+**Fix and test-set hygiene.**
+- I re-ran the evaluation on a **fresh random draw of test anomalies (seed 3)** that the new design was never tuned on, and stated this in the report.
+- **Result:** F1 rose from 0.429 to **0.476**, and flatline recall from 0.20 to **0.60**.
+- Isolation Forest used the same corrected feature, and its F1 *changed* (0.454 → 0.400). That was a reminder that small feature details move model results.
+
+**Lessons.**
+- **Read the zeros.** A metric of exactly 0.00 usually means a detector *cannot see* that kind of anomaly, not that it saw it badly.
+- **Diagnose on validation and score on test once.** Once test data has been seen, re-draw it before reporting.
+- **Don't move the goalposts.** Making spikes easier to detect would have improved the number and made it meaningless.
+- **Floating-point equality is a trap.** For "are these identical?", compare exact integers rather than a float statistic against a tolerance.
+- **Unit tests with hand-built inputs catch what aggregate metrics hide.** The metric only said "recall is a bit low"; the test said exactly why.
+
+---
+
+## Interview Questions — Day 17
+
+**Q: How does your API know where the database is?**
+From the `DATABASE_URL` environment variable, which Render injects into the container. pydantic-settings reads it, a validator converts Neon's string to the asyncpg format, Alembic migrates the database on boot, and SQLAlchemy keeps a TLS connection pool to Neon. Nothing about the environment is hard-coded.
+
+**Q: Why is the database not on Render?**
+A free Render service has no persistent disk, and every deploy starts a fresh container. State belongs in managed services built for it: Neon for PostgreSQL, Upstash for Redis. The compute is stateless and can be replaced at any time.
+
+**Q: Tell me about a production issue you debugged.**
+The backend story above: a healthy-looking deploy where products returned 500. I narrowed it down by comparing a working endpoint with a failing one, reproduced the cause in one line locally, and found that my health check was more forgiving than the real request path.
+
+**Q: Tell me about an ML result that surprised you.**
+The AI/ML story above: 0.00 flatline recall for every detector. It led to a new detector feature found on validation data, a floating-point bug caught by a unit test, and a fresh test draw so the reported number stayed honest.
